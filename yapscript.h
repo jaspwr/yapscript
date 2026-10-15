@@ -8,7 +8,7 @@
 //               Copyright (c) 2026                //
 /////////////////////////////////////////////////////
 
-// 
+//
 // Yapscript Example:
 // ```
 // @set(player_name, John)
@@ -33,7 +33,8 @@
 // #include <yapscript.h>
 //
 // void err_handler(const char *msg) { fprintf(stderr, "ERR: %s\n", msg); }
-// void function_handler(const char *function_name, size_t argc, const char **argv,
+// void function_handler(const char *function_name, size_t argc, const char
+// **argv,
 //                       StringBuilder *output) {
 //   if (strcmp(function_name, "player_name") == 0) {
 //     sb_append(output, "Bob");
@@ -62,7 +63,6 @@
 //   return 0;
 // }
 // ```
-
 
 #ifndef YAPSCRIPT_INCLUDE
 #define YAPSCRIPT_INCLUDE
@@ -232,14 +232,17 @@ static inline void ps_skip_string(ParsingState *ps, const char *str) {
 static inline void ps_error(ParsingState *ps, const char *msg) {
   if (ps->error_handler) {
     (ps->error_handler)(msg);
+  } else {
+    fprintf(stderr, "ERR: %s\n", msg);
   }
 }
 
 static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
-                       StringBuilder *fn_name_buffer);
+                                     StringBuilder *fn_name_buffer);
 
 static inline void parse_expression(ParsingState *ps, StringBuilder *sb,
-                      const char **terminators, size_t terminators_count) {
+                                    const char **terminators,
+                                    size_t terminators_count) {
   ps_skip_whitespace(ps);
   bool in_fn_name = false;
 
@@ -271,7 +274,7 @@ outer_break:
 }
 
 static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
-                       StringBuilder *fn_name_buffer) {
+                                     StringBuilder *fn_name_buffer) {
   if (fn_name_buffer->length == 0) {
     ps_error(ps, "Empty function name");
     return;
@@ -284,13 +287,24 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
     ps_skip_string(ps, OPEN_BRACKET);
     const char *TERMINATORS[2] = {COMMA, CLOSE_BRACKET};
     while (!is_eof(ps_peek(ps)) && !ps_starts_with(ps, CLOSE_BRACKET)) {
+      if (argument_count >= MAX_ARGUMENTS) {
+        ps_error(ps, "Max arguments exceeded");
+        return;
+      }
+
       sb_clear(&fn_arg_buffers[argument_count]);
+
+      size_t previous_cursor = ps->cursor;
+
       parse_expression(ps, &fn_arg_buffers[argument_count], TERMINATORS, 2);
+
+      if (ps->cursor == previous_cursor) {
+        ps_error(ps, "Expected function argument or ')'");
+        break;
+      }
+
       ps_skip_string(ps, COMMA);
       argument_count++;
-    }
-    if (!ps_starts_with(ps, CLOSE_BRACKET)) {
-      ps_error(ps, "Expected ')'");
     }
     ps_skip_string(ps, CLOSE_BRACKET);
   }
@@ -313,13 +327,19 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
 static inline void ps_jump_to(ParsingState *ps, const char *label) {
   size_t label_len = strlen(label);
 
-  assert(label_len > 2);
-  assert(label[0] == '[');
-  assert(label[label_len - 1] == ']');
+  if (label_len < 2 || label[0] != '[' || label[label_len - 1] != ']') {
+    ps_error(ps, "Incorrect label format. Should be [label]");
+    return;
+  }
 
   bool line_start = true;
-  assert(ps->src_len > label_len);
-  for (size_t cursor = 0; cursor < ps->src_len - label_len; cursor++) {
+
+  if (label_len > ps->src_len) {
+    ps_error(ps, "Label not found");
+    return;
+  }
+
+  for (size_t cursor = 0; cursor <= ps->src_len - label_len; cursor++) {
     if (line_start && strncmp(ps->src + cursor, label, label_len) == 0) {
       ps->cursor = cursor;
       return;
