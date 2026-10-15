@@ -1,7 +1,7 @@
-<center>
+<div align="center">
   <h1>yapscript</h1>
   <i>Header only game dialogue scripting language.</i>
-</center>
+</div>
 
 ## Yapscript Example:
 ```
