@@ -40,7 +40,7 @@
 //     sb_append(output, "Bob");
 //   } else if (strcmp(function_name, "print") == 0) {
 //     for (size_t i = 0; i < argc; i++) printf("%s\n", argv[i]);
-//   } else if (strcmp(function_name, "print") == 0) {
+//   } else {
 //     printf("UNDEFINED %s\n", function_name);
 //   }
 // }
