@@ -1,3 +1,8 @@
+<center>
+  <h1>yapscript</h1>
+  <i>Header only game dialogue scripting language.</i>
+</center>
+
 ## Yapscript Example:
 ```
 @set(player_name, John)
