@@ -82,6 +82,17 @@
 #define CLOSE_BRACKET ")"
 #define COMMA ","
 
+static inline bool is_alphanum_underscore(char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') || c == '_';
+}
+
+static inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
+
+static inline bool is_whitespace(char c) { return c == ' ' || c == '\t'; }
+
+static inline bool is_eof(char c) { return c == '\0'; }
+
 typedef struct {
   char *data;
   size_t length;
@@ -94,75 +105,6 @@ static inline StringBuilder sb_new(size_t initial_capacity) {
       .length = 0,
       .capacity = initial_capacity,
   };
-}
-
-#define MAX_ARGUMENTS 64
-
-typedef struct {
-  size_t cursor;
-  const char *src;
-  size_t src_len;
-  void (*function_handler)(const char *function_name, size_t argc,
-                           const char **argv, StringBuilder *output);
-  void (*error_handler)(const char *message);
-} ParsingState;
-
-static inline ParsingState ps_new(const char *src) {
-  return (ParsingState){
-      .cursor = 0,
-      .src = src,
-      .src_len = strlen(src),
-  };
-}
-
-#define MAX_RESPONSES 16
-typedef struct {
-  const char *name;
-  const char *text;
-  float speed;
-  size_t response_count;
-  const char *responses[MAX_RESPONSES];
-  const char *response_destinations[MAX_RESPONSES];
-} Message;
-
-static inline void msg_free(Message *msg) {
-  free((void *)msg->name);
-  free((void *)msg->text);
-  for (size_t i = 0; i < msg->response_count; i++) {
-    free((void *)msg->responses[i]);
-    free((void *)msg->response_destinations[i]);
-  }
-}
-
-static inline bool is_alphanum_underscore(char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-         (c >= '0' && c <= '9') || c == '_';
-}
-
-static inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
-
-static inline bool is_whitespace(char c) { return c == ' ' || c == '\t'; }
-
-static inline bool is_eof(char c) { return c == '\0'; }
-
-static inline char ps_peek(ParsingState *ps) {
-  assert(ps->cursor < ps->src_len + 1);
-  return ps->src[ps->cursor];
-}
-
-static inline char ps_advance_char(ParsingState *ps) {
-  assert(ps->cursor < ps->src_len + 1);
-  return ps->src[ps->cursor++];
-}
-
-static inline void ps_skip_newlines(ParsingState *ps) {
-  while (is_newline(ps_peek(ps)))
-    ps_advance_char(ps);
-}
-
-static inline void ps_skip_whitespace(ParsingState *ps) {
-  while (is_whitespace(ps_peek(ps)))
-    ps_advance_char(ps);
 }
 
 static inline void sb_free(StringBuilder *sb) { free(sb->data); }
@@ -210,6 +152,101 @@ static inline void sb_trim_end(StringBuilder *sb) {
   while (sb->length > 0 && is_whitespace(sb->data[sb->length - 1])) {
     sb->data[--sb->length] = '\0';
   }
+}
+
+#define MAX_ARGUMENTS 64
+
+typedef struct {
+  StringBuilder identifier;
+  StringBuilder value;
+} Variable;
+
+typedef struct {
+  size_t cursor;
+  const char *src;
+  size_t src_len;
+  void (*function_handler)(const char *function_name, size_t argc,
+                           const char **argv, StringBuilder *output);
+  void (*error_handler)(const char *message);
+  Variable variables[256];
+  size_t varibale_count;
+} ParsingState;
+
+static inline ParsingState ps_new(const char *src) {
+  return (ParsingState){
+      .cursor = 0,
+      .src = src,
+      .src_len = strlen(src),
+  };
+}
+
+static inline void ps_set_variable(ParsingState *ps, const char *name,
+                                   const char *value) {
+  for (int i = 0; i < ps->varibale_count; i++) {
+    char *ident = ps->variables[i].identifier.data;
+    if (strcmp(ident, name) == 0) {
+      sb_clear(&ps->variables[i].value);
+      sb_append(&ps->variables[i].value, value);
+      return;
+    }
+  }
+
+  size_t idx = ps->varibale_count++;
+  sb_clear(&ps->variables[idx].identifier);
+  sb_append(&ps->variables[idx].identifier, name);
+  sb_clear(&ps->variables[idx].value);
+  sb_append(&ps->variables[idx].value, value);
+}
+
+// Unsafe and can be reallocated. Do not hold onto pointer.
+static inline const char *ps_get_variable(ParsingState *ps, const char *name) {
+  for (int i = 0; i < ps->varibale_count; i++) {
+    char *ident = ps->variables[i].identifier.data;
+    if (strcmp(ident, name) == 0) {
+      return ps->variables[i].value.data;
+    }
+  }
+
+  return NULL;
+}
+
+#define MAX_RESPONSES 16
+typedef struct {
+  const char *name;
+  const char *text;
+  float speed;
+  size_t response_count;
+  const char *responses[MAX_RESPONSES];
+  const char *response_destinations[MAX_RESPONSES];
+} Message;
+
+static inline void msg_free(Message *msg) {
+  free((void *)msg->name);
+  free((void *)msg->text);
+  for (size_t i = 0; i < msg->response_count; i++) {
+    free((void *)msg->responses[i]);
+    free((void *)msg->response_destinations[i]);
+  }
+}
+
+static inline char ps_peek(ParsingState *ps) {
+  assert(ps->cursor < ps->src_len + 1);
+  return ps->src[ps->cursor];
+}
+
+static inline char ps_advance_char(ParsingState *ps) {
+  assert(ps->cursor < ps->src_len + 1);
+  return ps->src[ps->cursor++];
+}
+
+static inline void ps_skip_newlines(ParsingState *ps) {
+  while (is_newline(ps_peek(ps)))
+    ps_advance_char(ps);
+}
+
+static inline void ps_skip_whitespace(ParsingState *ps) {
+  while (is_whitespace(ps_peek(ps)))
+    ps_advance_char(ps);
 }
 
 static inline bool ps_starts_with(ParsingState *ps, const char *str) {
@@ -273,6 +310,46 @@ outer_break:
   sb_trim_end(sb);
 }
 
+static inline bool builtin_function_handler(const char *function_name,
+                                            size_t argc, const char **argv,
+                                            StringBuilder *output,
+                                            ParsingState *ps) {
+  const char *from_var = ps_get_variable(ps, function_name);
+  if (from_var) {
+    sb_append(output, from_var);
+    return true;
+  }
+
+  if (strcmp(function_name, "set") == 0) {
+    assert(argc == 2);
+    ps_set_variable(ps, argv[0], argv[1]);
+  } else if (strcmp(function_name, "print") == 0) {
+    for (size_t i = 0; i < argc; i++) {
+      printf("%s\n", argv[i]);
+    }
+  } else if (strcmp(function_name, "caps") == 0) {
+    assert(argc == 1);
+    const char *arg = argv[0];
+    for (size_t i = 0; arg[i] != '\0'; i++) {
+      char c = arg[i];
+      if (c >= 'a' && c <= 'z')
+        c += ('A' - 'a');
+      sb_append_char(output, c);
+    }
+  } else if (strcmp(function_name, "add") == 0) {
+    assert(argc == 2);
+    char buf[60];
+    itoa(atoi(argv[0]) + atoi(argv[1]), buf, 10);
+    for (size_t i = 0; buf[i] != '\0'; i++) {
+      sb_append_char(output, buf[i]);
+    }
+  } else {
+    return false;
+  }
+
+  return true;
+}
+
 static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
                                      StringBuilder *fn_name_buffer) {
   if (fn_name_buffer->length == 0) {
@@ -309,11 +386,14 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
     ps_skip_string(ps, CLOSE_BRACKET);
   }
 
+  const char *argv[MAX_ARGUMENTS] = {};
+  for (size_t i = 0; i < argument_count; i++) {
+    argv[i] = fn_arg_buffers[i].data;
+  }
+  bool used_builtin = builtin_function_handler(
+      fn_name_buffer->data, argument_count, argv, output, ps);
+
   if (ps->function_handler) {
-    const char *argv[MAX_ARGUMENTS] = {};
-    for (size_t i = 0; i < argument_count; i++) {
-      argv[i] = fn_arg_buffers[i].data;
-    }
     (ps->function_handler)(fn_name_buffer->data, argument_count, argv, output);
   }
 
