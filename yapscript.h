@@ -88,7 +88,7 @@ typedef struct {
   size_t capacity;
 } StringBuilder;
 
-inline StringBuilder sb_new(size_t initial_capacity) {
+static inline StringBuilder sb_new(size_t initial_capacity) {
   return (StringBuilder){
       .data = (char *)calloc(1, initial_capacity),
       .length = 0,
@@ -107,7 +107,7 @@ typedef struct {
   void (*error_handler)(const char *message);
 } ParsingState;
 
-inline ParsingState ps_new(const char *src) {
+static inline ParsingState ps_new(const char *src) {
   return (ParsingState){
       .cursor = 0,
       .src = src,
@@ -125,7 +125,7 @@ typedef struct {
   const char *response_destinations[MAX_RESPONSES];
 } Message;
 
-inline void msg_free(Message *msg) {
+static inline void msg_free(Message *msg) {
   free((void *)msg->name);
   free((void *)msg->text);
   for (size_t i = 0; i < msg->response_count; i++) {
@@ -165,9 +165,9 @@ static inline void ps_skip_whitespace(ParsingState *ps) {
     ps_advance_char(ps);
 }
 
-inline void sb_free(StringBuilder *sb) { free(sb->data); }
+static inline void sb_free(StringBuilder *sb) { free(sb->data); }
 
-inline void sb_clear(StringBuilder *sb) {
+static inline void sb_clear(StringBuilder *sb) {
   if (!sb->data) {
     sb->capacity = 64;
     sb->data = (char *)malloc(sb->capacity);
@@ -177,7 +177,7 @@ inline void sb_clear(StringBuilder *sb) {
   sb->data[0] = '\0';
 }
 
-inline void sb_append_char(StringBuilder *sb, char c) {
+static inline void sb_append_char(StringBuilder *sb, char c) {
   if (!sb->data) {
     sb->capacity = 64;
     sb->data = (char *)malloc(sb->capacity);
@@ -190,7 +190,7 @@ inline void sb_append_char(StringBuilder *sb, char c) {
   sb->data[sb->length] = '\0';
 }
 
-inline void sb_append(StringBuilder *sb, const char *str) {
+static inline void sb_append(StringBuilder *sb, const char *str) {
   size_t add_len = strlen(str);
   if (add_len == 0)
     return;
@@ -206,7 +206,7 @@ inline void sb_append(StringBuilder *sb, const char *str) {
   sb->length += add_len;
 }
 
-inline void sb_trim_end(StringBuilder *sb) {
+static inline void sb_trim_end(StringBuilder *sb) {
   while (sb->length > 0 && is_whitespace(sb->data[sb->length - 1])) {
     sb->data[--sb->length] = '\0';
   }
@@ -229,16 +229,16 @@ static inline void ps_skip_string(ParsingState *ps, const char *str) {
   }
 }
 
-inline void ps_error(ParsingState *ps, const char *msg) {
+static inline void ps_error(ParsingState *ps, const char *msg) {
   if (ps->error_handler) {
     (ps->error_handler)(msg);
   }
 }
 
-void ps_flush_function(ParsingState *ps, StringBuilder *output,
+static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
                        StringBuilder *fn_name_buffer);
 
-inline void parse_expression(ParsingState *ps, StringBuilder *sb,
+static inline void parse_expression(ParsingState *ps, StringBuilder *sb,
                       const char **terminators, size_t terminators_count) {
   ps_skip_whitespace(ps);
   bool in_fn_name = false;
@@ -270,7 +270,7 @@ outer_break:
   sb_trim_end(sb);
 }
 
-inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
+static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
                        StringBuilder *fn_name_buffer) {
   if (fn_name_buffer->length == 0) {
     ps_error(ps, "Empty function name");
@@ -310,7 +310,7 @@ inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
   sb_clear(fn_name_buffer);
 }
 
-inline void ps_jump_to(ParsingState *ps, const char *label) {
+static inline void ps_jump_to(ParsingState *ps, const char *label) {
   size_t label_len = strlen(label);
 
   assert(label_len > 2);
@@ -334,7 +334,7 @@ inline void ps_jump_to(ParsingState *ps, const char *label) {
   ps_error(ps, "Label not found");
 }
 
-inline void parse_response(ParsingState *ps, Message *msg) {
+static inline void parse_response(ParsingState *ps, Message *msg) {
   ps_skip_whitespace(ps);
 
   StringBuilder response_text = sb_new(64);
@@ -356,7 +356,7 @@ inline void parse_response(ParsingState *ps, Message *msg) {
   msg->response_count++;
 }
 
-inline Message ps_next_message(ParsingState *ps) {
+static inline Message ps_next_message(ParsingState *ps) {
   ps_skip_newlines(ps);
 
   ps_skip_whitespace(ps);
