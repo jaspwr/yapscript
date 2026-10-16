@@ -338,7 +338,7 @@ static inline bool builtin_function_handler(const char *function_name,
     }
   } else if (strcmp(function_name, "add") == 0) {
     assert(argc == 2);
-    char buf[60];
+    char buf[60] = {};
     itoa(atoi(argv[0]) + atoi(argv[1]), buf, 10);
     for (size_t i = 0; buf[i] != '\0'; i++) {
       sb_append_char(output, buf[i]);
@@ -393,7 +393,7 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
   bool used_builtin = builtin_function_handler(
       fn_name_buffer->data, argument_count, argv, output, ps);
 
-  if (ps->function_handler) {
+  if (!used_builtin && ps->function_handler) {
     (ps->function_handler)(fn_name_buffer->data, argument_count, argv, output);
   }
 
