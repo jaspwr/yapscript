@@ -100,15 +100,12 @@
     (da).data[(da).length++] = (val);                                          \
   } while (0)
 
-static inline bool ys_is_alphanum_underscore(char c) {
-  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-         (c >= '0' && c <= '9') || c == '_';
-}
-
 #define is_alphanum_underscore ys_is_alphanum_underscore
 #define is_newline ys_is_newline
 #define is_whitespace ys_is_whitespace
 #define is_eof ys_is_eof
+#define upper ys_upper
+#define lower ys_lower
 
 #define StringBuilder YsStringBuilder
 #define ParsingState YsParsingState
@@ -116,11 +113,28 @@ static inline bool ys_is_alphanum_underscore(char c) {
 #define Message YsMessage
 #define Variable YsVariable
 
+static inline bool ys_is_alphanum_underscore(char c) {
+  return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+         (c >= '0' && c <= '9') || c == '_';
+}
+
 static inline bool ys_is_newline(char c) { return c == '\n' || c == '\r'; }
 
 static inline bool ys_is_whitespace(char c) { return c == ' ' || c == '\t'; }
 
 static inline bool ys_is_eof(char c) { return c == '\0'; }
+
+static inline char ys_upper(char c) {
+  if (c >= 'a' && c <= 'z')
+    c += ('A' - 'a');
+  return c;
+}
+
+static inline char ys_lower(char c) {
+  if (c >= 'A' && c <= 'Z')
+    c -= ('A' - 'a');
+  return c;
+}
 
 typedef struct {
   char *data;
@@ -255,7 +269,7 @@ static inline void response_free(Response *r) {
 typedef struct {
   const char *name;
   const char *text;
-  float speed;
+  int32_t speed;
   Vec(Response) responses;
 } YsMessage;
 
@@ -362,26 +376,120 @@ static inline bool __builtin_function_handler(const char *function_name,
     }
   }
 
+#define UN_MATH_OP(name, op)                                                   \
+  }                                                                            \
+  else if (strcmp(function_name, name) == 0) {                                 \
+    if (argc != 2) {                                                           \
+      ps_error(ps, "`" name "` takes 1 argument. Usage: " name "(a)");         \
+      return true;                                                             \
+    }                                                                          \
+    char buf[60] = {};                                                         \
+    int32_t a = atoi(argv[0]);                                                 \
+    itoa(op, buf, 10);                                                         \
+    for (size_t i = 0; !is_eof(buf[i]); i++)                                   \
+      sb_append_char(output, buf[i]);
+
+#define BIN_MATH_OP(name, op)                                                  \
+  }                                                                            \
+  else if (strcmp(function_name, name) == 0) {                                 \
+    if (argc != 2) {                                                           \
+      ps_error(ps, "`" name "` takes 2 arguments. Usage: " name "(a, b)");     \
+      return true;                                                             \
+    }                                                                          \
+    char buf[60] = {};                                                         \
+    int32_t a = atoi(argv[0]);                                                 \
+    int32_t b = atoi(argv[1]);                                                 \
+    itoa(op, buf, 10);                                                         \
+    for (size_t i = 0; !is_eof(buf[i]); i++)                                   \
+      sb_append_char(output, buf[i]);
+
+#define TRUTHY(x) strlen(x) > 0 && strcmp(x, "0") != 0
+
+#define UN_BOOL_OP(name, op)                                                   \
+  }                                                                            \
+  else if (strcmp(function_name, name) == 0) {                                 \
+    if (argc != 2) {                                                           \
+      ps_error(ps, "`" name "` takes 1 argument. Usage: " name "(a)");         \
+      return true;                                                             \
+    }                                                                          \
+    char buf[60] = {};                                                         \
+    bool a = TRUTHY(argv[0]);                                                  \
+    if (op)                                                                    \
+      sb_append_char(output, '1');
+
+#define BIN_BOOL_OP(name, op)                                                  \
+  }                                                                            \
+  else if (strcmp(function_name, name) == 0) {                                 \
+    if (argc != 2) {                                                           \
+      ps_error(ps, "`" name "` takes 2 arguments. Usage: " name "(a, b)");     \
+      return true;                                                             \
+    }                                                                          \
+    char buf[60] = {};                                                         \
+    bool a = TRUTHY(argv[0]);                                                  \
+    bool b = TRUTHY(argv[1]);                                                  \
+    if (op)                                                                    \
+      sb_append_char(output, '1');
+
   if (strcmp(function_name, "set") == 0) {
     if (argc != 2) {
       ps_error(ps, "`set` takes 2 arguments. Usage: set(identifier, value)");
       return true;
     }
     ps_set_variable(ps, argv[0], argv[1]);
+  } else if (strcmp(function_name, "unset") == 0) {
+    if (argc != 1) {
+      ps_error(ps, "`set` takes 1 arguments. Usage: unset(identifier)");
+      return true;
+    }
+    ps_set_variable(ps, argv[0], "");
+  } else if (strcmp(function_name, "null") == 0) {
+  } else if (strcmp(function_name, "do") == 0) {
+    for (size_t i = 0; i < argc; i++)
+      sb_append(output, argv[i]);
   } else if (strcmp(function_name, "print") == 0) {
     for (size_t i = 0; i < argc; i++) {
       printf("%s\n", argv[i]);
     }
-  } else if (strcmp(function_name, "caps") == 0) {
+  } else if (strcmp(function_name, "upper") == 0) {
     if (argc != 1) {
-      ps_error(ps, "`caps` takes 1 argument. Usage: caps(value)");
+      ps_error(ps, "`upper` takes 1 argument. Usage: upper(value)");
       return true;
     }
     const char *arg = argv[0];
     for (size_t i = 0; !is_eof(arg[i]); i++) {
       char c = arg[i];
-      if (c >= 'a' && c <= 'z')
-        c += ('A' - 'a');
+      sb_append_char(output, upper(arg[i]));
+    }
+  } else if (strcmp(function_name, "lower") == 0) {
+    if (argc != 1) {
+      ps_error(ps, "`upper` takes 1 argument. Usage: lower(value)");
+      return true;
+    }
+    const char *arg = argv[0];
+    for (size_t i = 0; !is_eof(arg[i]); i++) {
+      sb_append_char(output, lower(arg[i]));
+    }
+  } else if (strcmp(function_name, "capitalize") == 0) {
+    if (argc != 1) {
+      ps_error(ps, "`capitalize` takes 1 argument. Usage: lower(value)");
+      return true;
+    }
+    const char *arg = argv[0];
+    bool word_start = true;
+    for (size_t i = 0; !is_eof(arg[i]); i++) {
+      char c = arg[i];
+      sb_append_char(output, word_start ? upper(c) : lower(c));
+      word_start = is_whitespace(c);
+    }
+  } else if (strcmp(function_name, "reverse") == 0) {
+    if (argc != 1) {
+      ps_error(ps, "`reverse` takes 1 argument. Usage: reverse(value)");
+      return true;
+    }
+    const char *arg = argv[0];
+    size_t len = strlen(arg);
+    for (size_t i = len; i > 0; i--) {
+      char c = arg[i - 1];
       sb_append_char(output, c);
     }
   } else if (strcmp(function_name, "eq") == 0) {
@@ -392,38 +500,58 @@ static inline bool __builtin_function_handler(const char *function_name,
 
     if (strcmp(argv[0], argv[1]) == 0)
       sb_append_char(output, '1');
+  } else if (strcmp(function_name, "neq") == 0) {
+    if (argc != 2) {
+      ps_error(ps, "`neq` takes 2 arguments. Usage: neq(a, b)");
+      return true;
+    }
+
+    if (strcmp(argv[0], argv[1]) != 0)
+      sb_append_char(output, '1');
   } else if (strcmp(function_name, "if") == 0) {
-    if (argc != 3) {
-      ps_error(
-          ps,
-          "`if` takes 3 arguments. Usage: if(cond, true_branch, false_branch)");
+    if (argc != 2 && argc != 3) {
+      ps_error(ps, "`if` takes 2 or 3 arguments. Usage: if(cond, true_branch, "
+                   "false_branch) OR if(cond, true_branch)");
       return true;
     }
-    if (strlen(argv[0]) > 0 && strcmp(argv[0], "0") != 0)
+    if (TRUTHY(argv[0]))
       sb_append(output, argv[1]);
-    else
+    else if (argc == 3)
       sb_append(output, argv[2]);
-  } else if (strcmp(function_name, "add") == 0) {
+  } else if (strcmp(function_name, "repeat") == 0) {
     if (argc != 2) {
-      ps_error(ps, "`add` takes 2 arguments. Usage: add(a, b)");
+      ps_error(ps, "`repeat` takes 2 arguments. Usage: repeat(value, amount)");
       return true;
     }
-    char buf[60] = {};
-    itoa(atoi(argv[0]) + atoi(argv[1]), buf, 10);
-    for (size_t i = 0; !is_eof(buf[i]); i++)
-      sb_append_char(output, buf[i]);
-  } else if (strcmp(function_name, "gt") == 0) {
-    if (argc != 2) {
-      ps_error(ps, "`gt` takes 2 arguments. Usage: gt(a, b)");
-      return true;
-    }
-    char buf[60] = {};
-    itoa(atoi(argv[0]) > atoi(argv[1]), buf, 10);
-    for (size_t i = 0; !is_eof(buf[i]); i++)
-      sb_append_char(output, buf[i]);
+    int32_t amount = atoi(argv[1]);
+    for (int32_t i = 0; i < amount; i++)
+      sb_append(output, argv[0]);
+    BIN_MATH_OP("add", a + b)
+    BIN_MATH_OP("sub", a - b)
+    BIN_MATH_OP("div", a / b)
+    BIN_MATH_OP("mul", a * b)
+    BIN_MATH_OP("mod", a % b)
+    BIN_MATH_OP("gt", a > b)
+    BIN_MATH_OP("lt", a < b)
+    BIN_MATH_OP("gte", a >= b)
+    BIN_MATH_OP("lte", a <= b)
+    BIN_MATH_OP("num_eq", a == b)
+    BIN_MATH_OP("num_neq", a != b)
+    UN_MATH_OP("neg", -a)
+    UN_MATH_OP("incr", a++)
+    UN_MATH_OP("decr", a--)
+    BIN_BOOL_OP("and", a && b)
+    BIN_BOOL_OP("or", a || b)
+    BIN_BOOL_OP("xor", a ^ b)
+    UN_BOOL_OP("not", !a)
   } else {
     return false;
   }
+
+#undef UN_MATH_OP
+#undef BIN_MATH_OP
+#undef UN_BOOL_OP
+#undef BIN_BOOL_OP
 
   return true;
 }
@@ -544,6 +672,12 @@ static inline Message ps_next_message(ParsingState *ps) {
   StringBuilder name = sb_new(64);
   StringBuilder text = sb_new(64);
   Message msg = (Message){};
+
+  int32_t speed = atoi(ps_get_variable(ps, "speed"));
+  if (speed != 0)
+    msg.speed = speed;
+  else
+    msg.speed = 10;
 
   const char *TERMINATORS[1] = {COLON};
   __parse_expression(ps, &name, TERMINATORS, 1);
