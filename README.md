@@ -24,6 +24,7 @@ Jane: see you later, @player_name!
 
 ## Implementation Example:
 ```c
+#define YAPSCRIPT_STRIP_PREFIXES
 #include <yapscript.h>
 
 void err_handler(const char *msg) { fprintf(stderr, "ERR: %s\n", msg); }

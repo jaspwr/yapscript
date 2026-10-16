@@ -30,12 +30,13 @@
 //
 // Implementation Example:
 // ```
+// #define YAPSCRIPT_STRIP_PREFIXES
 // #include <yapscript.h>
 //
-// void err_handler(const char *msg) { fprintf(stderr, "ERR: %s\n", msg); }
-// void function_handler(const char *function_name, size_t argc, const char
-// **argv,
-//                       StringBuilder *output) {
+// void err_handler(const char *msg, void *user_data) { fprintf(stderr, "ERR:
+// %s\n", msg); } void function_handler(const char *function_name, size_t argc,
+// const char **argv,
+//                       StringBuilder *output, void *user_data) {
 //   if (strcmp(function_name, "player_name") == 0) {
 //     sb_append(output, "Bob");
 //   } else if (strcmp(function_name, "print") == 0) {
@@ -82,22 +83,50 @@
 #define CLOSE_BRACKET ")"
 #define COMMA ","
 
-static inline bool is_alphanum_underscore(char c) {
+#define Vec(T)                                                                 \
+  struct {                                                                     \
+    T *data;                                                                   \
+    size_t length;                                                             \
+    size_t capacity;                                                           \
+  }
+#define da_free(da) free((da).data)
+#define da_push(da, val)                                                       \
+  do {                                                                         \
+    if ((da).length >= (da).capacity) {                                        \
+      (da).capacity = (da).capacity == 0 ? 4 : (da).capacity * 2;              \
+      *(void **)&(da).data =                                                   \
+          realloc((da).data, (da).capacity * sizeof(*(da).data));              \
+    }                                                                          \
+    (da).data[(da).length++] = (val);                                          \
+  } while (0)
+
+static inline bool ys_is_alphanum_underscore(char c) {
   return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
          (c >= '0' && c <= '9') || c == '_';
 }
 
-static inline bool is_newline(char c) { return c == '\n' || c == '\r'; }
+#define is_alphanum_underscore ys_is_alphanum_underscore
+#define is_newline ys_is_newline
+#define is_whitespace ys_is_whitespace
+#define is_eof ys_is_eof
 
-static inline bool is_whitespace(char c) { return c == ' ' || c == '\t'; }
+#define StringBuilder YsStringBuilder
+#define ParsingState YsParsingState
+#define Response YsResponse
+#define Message YsMessage
+#define Variable YsVariable
 
-static inline bool is_eof(char c) { return c == '\0'; }
+static inline bool ys_is_newline(char c) { return c == '\n' || c == '\r'; }
+
+static inline bool ys_is_whitespace(char c) { return c == ' ' || c == '\t'; }
+
+static inline bool ys_is_eof(char c) { return c == '\0'; }
 
 typedef struct {
   char *data;
   size_t length;
   size_t capacity;
-} StringBuilder;
+} YsStringBuilder;
 
 static inline StringBuilder sb_new(size_t initial_capacity) {
   return (StringBuilder){
@@ -148,29 +177,33 @@ static inline void sb_append(StringBuilder *sb, const char *str) {
   sb->length += add_len;
 }
 
+static inline void sb_replace(StringBuilder *sb, const char *str) {
+  sb_clear(sb);
+  sb_append(sb, str);
+}
+
 static inline void sb_trim_end(StringBuilder *sb) {
   while (sb->length > 0 && is_whitespace(sb->data[sb->length - 1])) {
     sb->data[--sb->length] = '\0';
   }
 }
 
-#define MAX_ARGUMENTS 64
-
 typedef struct {
   StringBuilder identifier;
   StringBuilder value;
-} Variable;
+} YsVariable;
 
 typedef struct {
   size_t cursor;
   const char *src;
   size_t src_len;
   void (*function_handler)(const char *function_name, size_t argc,
-                           const char **argv, StringBuilder *output);
-  void (*error_handler)(const char *message);
-  Variable variables[256];
-  size_t varibale_count;
-} ParsingState;
+                           const char **argv, StringBuilder *output,
+                           void *user_data);
+  void (*error_handler)(const char *message, void *user_data);
+  Vec(Variable) variables;
+  void *user_data;
+} YsParsingState;
 
 static inline ParsingState ps_new(const char *src) {
   return (ParsingState){
@@ -182,51 +215,57 @@ static inline ParsingState ps_new(const char *src) {
 
 static inline void ps_set_variable(ParsingState *ps, const char *name,
                                    const char *value) {
-  for (int i = 0; i < ps->varibale_count; i++) {
-    char *ident = ps->variables[i].identifier.data;
+  for (int i = 0; i < ps->variables.length; i++) {
+    char *ident = ps->variables.data[i].identifier.data;
     if (strcmp(ident, name) == 0) {
-      sb_clear(&ps->variables[i].value);
-      sb_append(&ps->variables[i].value, value);
+      sb_clear(&ps->variables.data[i].value);
+      sb_append(&ps->variables.data[i].value, value);
       return;
     }
   }
 
-  size_t idx = ps->varibale_count++;
-  sb_clear(&ps->variables[idx].identifier);
-  sb_append(&ps->variables[idx].identifier, name);
-  sb_clear(&ps->variables[idx].value);
-  sb_append(&ps->variables[idx].value, value);
+  Variable new_var = (Variable){};
+  sb_replace(&new_var.identifier, name);
+  sb_replace(&new_var.value, value);
+  da_push(ps->variables, new_var);
 }
 
 // Unsafe and can be reallocated. Do not hold onto pointer.
 static inline const char *ps_get_variable(ParsingState *ps, const char *name) {
-  for (int i = 0; i < ps->varibale_count; i++) {
-    char *ident = ps->variables[i].identifier.data;
+  for (int i = 0; i < ps->variables.length; i++) {
+    char *ident = ps->variables.data[i].identifier.data;
     if (strcmp(ident, name) == 0) {
-      return ps->variables[i].value.data;
+      return ps->variables.data[i].value.data;
     }
   }
 
   return NULL;
 }
 
-#define MAX_RESPONSES 16
+typedef struct {
+  const char *message;
+  const char *destination;
+} YsResponse;
+
+static inline void response_free(Response *r) {
+  free((void *)r->message);
+  free((void *)r->destination);
+}
+
 typedef struct {
   const char *name;
   const char *text;
   float speed;
-  size_t response_count;
-  const char *responses[MAX_RESPONSES];
-  const char *response_destinations[MAX_RESPONSES];
-} Message;
+  Vec(Response) responses;
+} YsMessage;
 
 static inline void msg_free(Message *msg) {
   free((void *)msg->name);
   free((void *)msg->text);
-  for (size_t i = 0; i < msg->response_count; i++) {
-    free((void *)msg->responses[i]);
-    free((void *)msg->response_destinations[i]);
+  for (size_t i = 0; i < msg->responses.length; i++) {
+    response_free(&msg->responses.data[i]);
   }
+  da_free(msg->responses);
 }
 
 static inline char ps_peek(ParsingState *ps) {
@@ -268,7 +307,7 @@ static inline void ps_skip_string(ParsingState *ps, const char *str) {
 
 static inline void ps_error(ParsingState *ps, const char *msg) {
   if (ps->error_handler) {
-    (ps->error_handler)(msg);
+    (ps->error_handler)(msg, ps->user_data);
   } else {
     fprintf(stderr, "ERR: %s\n", msg);
   }
@@ -277,9 +316,9 @@ static inline void ps_error(ParsingState *ps, const char *msg) {
 static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
                                      StringBuilder *fn_name_buffer);
 
-static inline void parse_expression(ParsingState *ps, StringBuilder *sb,
-                                    const char **terminators,
-                                    size_t terminators_count) {
+static inline void __parse_expression(ParsingState *ps, StringBuilder *sb,
+                                      const char **terminators,
+                                      size_t terminators_count) {
   ps_skip_whitespace(ps);
   bool in_fn_name = false;
 
@@ -310,39 +349,78 @@ outer_break:
   sb_trim_end(sb);
 }
 
-static inline bool builtin_function_handler(const char *function_name,
-                                            size_t argc, const char **argv,
-                                            StringBuilder *output,
-                                            ParsingState *ps) {
+static inline bool __builtin_function_handler(const char *function_name,
+                                              size_t argc, const char **argv,
+                                              StringBuilder *output,
+                                              ParsingState *ps) {
   const char *from_var = ps_get_variable(ps, function_name);
   if (from_var) {
-    sb_append(output, from_var);
-    return true;
+    size_t len = strlen(from_var);
+    if (len > 0) {
+      sb_append(output, from_var);
+      return true;
+    }
   }
 
   if (strcmp(function_name, "set") == 0) {
-    assert(argc == 2);
+    if (argc != 2) {
+      ps_error(ps, "`set` takes 2 arguments. Usage: set(identifier, value)");
+      return true;
+    }
     ps_set_variable(ps, argv[0], argv[1]);
   } else if (strcmp(function_name, "print") == 0) {
     for (size_t i = 0; i < argc; i++) {
       printf("%s\n", argv[i]);
     }
   } else if (strcmp(function_name, "caps") == 0) {
-    assert(argc == 1);
+    if (argc != 1) {
+      ps_error(ps, "`caps` takes 1 argument. Usage: caps(value)");
+      return true;
+    }
     const char *arg = argv[0];
-    for (size_t i = 0; arg[i] != '\0'; i++) {
+    for (size_t i = 0; !is_eof(arg[i]); i++) {
       char c = arg[i];
       if (c >= 'a' && c <= 'z')
         c += ('A' - 'a');
       sb_append_char(output, c);
     }
+  } else if (strcmp(function_name, "eq") == 0) {
+    if (argc != 2) {
+      ps_error(ps, "`eq` takes 2 arguments. Usage: eq(a, b)");
+      return true;
+    }
+
+    if (strcmp(argv[0], argv[1]) == 0)
+      sb_append_char(output, '1');
+  } else if (strcmp(function_name, "if") == 0) {
+    if (argc != 3) {
+      ps_error(
+          ps,
+          "`if` takes 3 arguments. Usage: if(cond, true_branch, false_branch)");
+      return true;
+    }
+    if (strlen(argv[0]) > 0 && strcmp(argv[0], "0") != 0)
+      sb_append(output, argv[1]);
+    else
+      sb_append(output, argv[2]);
   } else if (strcmp(function_name, "add") == 0) {
-    assert(argc == 2);
+    if (argc != 2) {
+      ps_error(ps, "`add` takes 2 arguments. Usage: add(a, b)");
+      return true;
+    }
     char buf[60] = {};
     itoa(atoi(argv[0]) + atoi(argv[1]), buf, 10);
-    for (size_t i = 0; buf[i] != '\0'; i++) {
+    for (size_t i = 0; !is_eof(buf[i]); i++)
       sb_append_char(output, buf[i]);
+  } else if (strcmp(function_name, "gt") == 0) {
+    if (argc != 2) {
+      ps_error(ps, "`gt` takes 2 arguments. Usage: gt(a, b)");
+      return true;
     }
+    char buf[60] = {};
+    itoa(atoi(argv[0]) > atoi(argv[1]), buf, 10);
+    for (size_t i = 0; !is_eof(buf[i]); i++)
+      sb_append_char(output, buf[i]);
   } else {
     return false;
   }
@@ -357,48 +435,44 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
     return;
   }
 
-  StringBuilder fn_arg_buffers[MAX_ARGUMENTS] = {};
+  Vec(StringBuilder) arguments = {};
 
-  size_t argument_count = 0;
   if (ps_starts_with(ps, OPEN_BRACKET)) {
     ps_skip_string(ps, OPEN_BRACKET);
     const char *TERMINATORS[2] = {COMMA, CLOSE_BRACKET};
     while (!is_eof(ps_peek(ps)) && !ps_starts_with(ps, CLOSE_BRACKET)) {
-      if (argument_count >= MAX_ARGUMENTS) {
-        ps_error(ps, "Max arguments exceeded");
-        return;
-      }
-
-      sb_clear(&fn_arg_buffers[argument_count]);
+      StringBuilder arg = {};
+      sb_clear(&arg);
 
       size_t previous_cursor = ps->cursor;
 
-      parse_expression(ps, &fn_arg_buffers[argument_count], TERMINATORS, 2);
+      __parse_expression(ps, &arg, TERMINATORS, 2);
 
-      if (ps->cursor == previous_cursor) {
+      if (ps->cursor == previous_cursor && !ps_starts_with(ps, COMMA)) {
         ps_error(ps, "Expected function argument or ')'");
         break;
       }
 
       ps_skip_string(ps, COMMA);
-      argument_count++;
+      da_push(arguments, arg);
     }
     ps_skip_string(ps, CLOSE_BRACKET);
   }
 
-  const char *argv[MAX_ARGUMENTS] = {};
-  for (size_t i = 0; i < argument_count; i++) {
-    argv[i] = fn_arg_buffers[i].data;
+  const char *argv[64] = {};
+  for (size_t i = 0; i < arguments.length; i++) {
+    argv[i] = arguments.data[i].data;
   }
-  bool used_builtin = builtin_function_handler(
-      fn_name_buffer->data, argument_count, argv, output, ps);
+  bool used_builtin = __builtin_function_handler(
+      fn_name_buffer->data, arguments.length, argv, output, ps);
 
   if (!used_builtin && ps->function_handler) {
-    (ps->function_handler)(fn_name_buffer->data, argument_count, argv, output);
+    (ps->function_handler)(fn_name_buffer->data, arguments.length, argv, output,
+                           ps->user_data);
   }
 
-  for (size_t i = 0; i < argument_count; i++) {
-    sb_free(&fn_arg_buffers[i]);
+  for (size_t i = 0; i < arguments.length; i++) {
+    sb_free(&arguments.data[i]);
   }
 
   sb_clear(fn_name_buffer);
@@ -434,26 +508,29 @@ static inline void ps_jump_to(ParsingState *ps, const char *label) {
   ps_error(ps, "Label not found");
 }
 
-static inline void parse_response(ParsingState *ps, Message *msg) {
+static inline void __parse_response(ParsingState *ps, Message *msg) {
   ps_skip_whitespace(ps);
 
   StringBuilder response_text = sb_new(64);
   StringBuilder destination_text = sb_new(64);
 
   const char *TERMINATORS[1] = {ARROW};
-  parse_expression(ps, &response_text, TERMINATORS, 1);
+  __parse_expression(ps, &response_text, TERMINATORS, 1);
 
   ps_skip_string(ps, ARROW);
 
   ps_skip_whitespace(ps);
 
-  parse_expression(ps, &destination_text, NULL, 0);
+  __parse_expression(ps, &destination_text, NULL, 0);
 
   sb_trim_end(&response_text);
   sb_trim_end(&destination_text);
-  msg->responses[msg->response_count] = response_text.data;
-  msg->response_destinations[msg->response_count] = destination_text.data;
-  msg->response_count++;
+
+  Response r = (Response){
+      .message = response_text.data,
+      .destination = destination_text.data,
+  };
+  da_push(msg->responses, r);
 }
 
 static inline Message ps_next_message(ParsingState *ps) {
@@ -469,21 +546,21 @@ static inline Message ps_next_message(ParsingState *ps) {
   Message msg = (Message){};
 
   const char *TERMINATORS[1] = {COLON};
-  parse_expression(ps, &name, TERMINATORS, 1);
+  __parse_expression(ps, &name, TERMINATORS, 1);
 
   sb_trim_end(&name);
 
   if (ps_starts_with(ps, COLON)) {
     ps_skip_string(ps, COLON);
 
-    parse_expression(ps, &text, NULL, 0);
+    __parse_expression(ps, &text, NULL, 0);
 
     // Get responses
-    while (!is_eof(ps_peek(ps)) && msg.response_count < MAX_RESPONSES) {
+    while (!is_eof(ps_peek(ps))) {
       ps_skip_newlines(ps);
       bool indented = is_whitespace(ps_peek(ps));
       if (indented) {
-        parse_response(ps, &msg);
+        __parse_response(ps, &msg);
       } else {
         break;
       }
@@ -499,4 +576,28 @@ static inline Message ps_next_message(ParsingState *ps) {
   msg.text = text.data;
   return msg;
 }
+
+#undef Vec
+#undef da_free
+#undef da_push
+#undef ARROW
+#undef COLON
+#undef AT
+#undef OPEN_BRACKET
+#undef CLOSE_BRACKET
+#undef COMMA
+
+#undef is_alphanum_underscore
+#undef is_newline
+#undef is_whitespace
+#undef is_eof
+
+#ifndef YAPSCRIPT_STRIP_PREFIXES
+#undef StringBuilder
+#undef ParsingState
+#undef Response
+#undef Message
+#undef Variable
+#endif
+
 #endif
