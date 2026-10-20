@@ -20,7 +20,7 @@
 //    Goodbye -> [leaving]
 //
 // [doing well]
-// Jane: Good to here!
+// Jane: Good to hear!
 //
 // [leaving]
 // Jane: see you later, @player_name!
@@ -51,14 +51,13 @@
 //   ps.error_handler = &err_handler;
 //   ps.function_handler = &function_handler;
 //   while (true) {
-//     Message msg = ps_next_message(&ps);
-//     if (!msg.text)
+//     ps_next_message(&ps);
+//     if (!ps.message.text)
 //       break;
-//     printf("%s says %s\n", msg.name, msg.text);
-//     for (size_t i = 0; i < msg.response_count; i++)
+//     printf("%s says %s\n", ps.message.name, ps.message.text);
+//     for (size_t i = 0; i < ps.message.responses.length; i++)
 //       printf("   can respond %s jumping to %s\n", msg.responses[i],
 //              msg.response_destinations[i]);
-//     msg_free(&msg);
 //   }
 //   ps_jump_to(&ps, "[start]");
 //   return 0;
@@ -82,6 +81,8 @@
 #define OPEN_BRACKET "("
 #define CLOSE_BRACKET ")"
 #define COMMA ","
+
+#define BASE_SPEED 10
 
 #define Vec(T)                                                                 \
   struct {                                                                     \
@@ -208,6 +209,32 @@ typedef struct {
 } YsVariable;
 
 typedef struct {
+  const char *message;
+  const char *destination;
+} YsResponse;
+
+static inline void response_free(Response *r) {
+  free((void *)r->message);
+  free((void *)r->destination);
+}
+
+typedef struct {
+  const char *name;
+  const char *text;
+  int32_t speed;
+  Vec(Response) responses;
+} YsMessage;
+
+static inline void msg_free(Message *msg) {
+  free((void *)msg->name);
+  free((void *)msg->text);
+  for (size_t i = 0; i < msg->responses.length; i++) {
+    response_free(&msg->responses.data[i]);
+  }
+  da_free(msg->responses);
+}
+
+typedef struct {
   size_t cursor;
   const char *src;
   size_t src_len;
@@ -217,6 +244,13 @@ typedef struct {
   void (*error_handler)(const char *message, void *user_data);
   Vec(Variable) variables;
   void *user_data;
+  bool has_message;
+  float scroll_substring;
+  bool show_responses;
+  YsMessage message;
+  bool free_on_replace;
+  int32_t selected_option;
+  bool uses_scrolling;
 } YsParsingState;
 
 static inline ParsingState ps_new(const char *src) {
@@ -225,6 +259,34 @@ static inline ParsingState ps_new(const char *src) {
       .src = src,
       .src_len = strlen(src),
   };
+}
+
+static inline void ps_load(ParsingState *ps, const char *path) {
+  char *buffer = 0;
+  long length;
+  FILE *f = fopen(path, "rb");
+
+  if (f) {
+    fseek(f, 0, SEEK_END);
+    length = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    buffer = (char *)malloc(length + 1);
+    if (buffer) {
+      fread(buffer, 1, length, f);
+    }
+    buffer[length] = '\0';
+    fclose(f);
+  }
+
+  if (buffer) {
+    if (ps->free_on_replace) {
+      free((void *)ps->src);
+    }
+    ps->free_on_replace = true;
+    ps->src = buffer;
+    ps->src_len = length;
+    ps->cursor = 0;
+  }
 }
 
 static inline void ps_set_variable(ParsingState *ps, const char *name,
@@ -254,32 +316,6 @@ static inline const char *ps_get_variable(ParsingState *ps, const char *name) {
   }
 
   return NULL;
-}
-
-typedef struct {
-  const char *message;
-  const char *destination;
-} YsResponse;
-
-static inline void response_free(Response *r) {
-  free((void *)r->message);
-  free((void *)r->destination);
-}
-
-typedef struct {
-  const char *name;
-  const char *text;
-  int32_t speed;
-  Vec(Response) responses;
-} YsMessage;
-
-static inline void msg_free(Message *msg) {
-  free((void *)msg->name);
-  free((void *)msg->text);
-  for (size_t i = 0; i < msg->responses.length; i++) {
-    response_free(&msg->responses.data[i]);
-  }
-  da_free(msg->responses);
 }
 
 static inline char ps_peek(ParsingState *ps) {
@@ -623,7 +659,7 @@ static inline void ps_jump_to(ParsingState *ps, const char *label) {
 
   for (size_t cursor = 0; cursor <= ps->src_len - label_len; cursor++) {
     if (line_start && strncmp(ps->src + cursor, label, label_len) == 0) {
-      ps->cursor = cursor;
+      ps->cursor = cursor + label_len;
       return;
     }
     char c = *(ps->src + cursor);
@@ -661,23 +697,79 @@ static inline void __parse_response(ParsingState *ps, Message *msg) {
   da_push(msg->responses, r);
 }
 
-static inline Message ps_next_message(ParsingState *ps) {
+static inline int32_t ps_substring_len_tick(ParsingState *ps,
+                                            float delta_time) {
+  if (!ps->has_message)
+    return 0;
+  int32_t len = (int32_t)ps->scroll_substring;
+  size_t text_len = strlen(ps->message.text);
+
+  if (len < text_len) {
+    ps->scroll_substring +=
+        15. * (float)delta_time *
+        ((float)(ps->message.speed ? ps->message.speed : BASE_SPEED) /
+         (float)BASE_SPEED);
+  } else {
+    ps->show_responses = true;
+  }
+  return len;
+}
+
+static inline void ps_next_selection(ParsingState *ps) {
+  if (!ps->message.responses.length)
+    return;
+  ps->selected_option++;
+  ps->selected_option %= ps->message.responses.length;
+}
+
+static inline void ps_prev_selection(ParsingState *ps) {
+  if (!ps->message.responses.length)
+    return;
+  ps->selected_option--;
+  if (ps->selected_option < 0)
+    ps->selected_option = ps->message.responses.length - 1;
+}
+
+static inline void ps_next_message(ParsingState *ps) {
+  if (ps->uses_scrolling && ps->has_message && !ps->show_responses) {
+    size_t text_len = strlen(ps->message.text);
+    ps->scroll_substring = (float)text_len;
+    ps->show_responses = true;
+    return;
+  }
+
+  ps->scroll_substring = 0.;
+  ps->show_responses = false;
+
+  if (ps->has_message && ps->selected_option >= 0 &&
+      ps->selected_option < ps->message.responses.length &&
+      ps->message.responses.data[ps->selected_option].destination) {
+    ps_jump_to(ps, ps->message.responses.data[ps->selected_option].destination);
+  }
+
+  ps->selected_option = 0;
+
   ps_skip_newlines(ps);
 
   ps_skip_whitespace(ps);
 
-  if (ps_peek(ps) == '\0')
-    return (Message){};
+  if (ps_peek(ps) == '\0') {
+    ps->has_message = false;
+    return;
+  }
 
   StringBuilder name = sb_new(64);
   StringBuilder text = sb_new(64);
   Message msg = (Message){};
 
-  int32_t speed = atoi(ps_get_variable(ps, "speed"));
-  if (speed != 0)
-    msg.speed = speed;
-  else
-    msg.speed = 10;
+  const char *speed_str = ps_get_variable(ps, "speed");
+  if (speed_str) {
+    int32_t speed = atoi(speed_str);
+    if (speed != 0)
+      msg.speed = speed;
+    else
+      msg.speed = BASE_SPEED;
+  }
 
   const char *TERMINATORS[1] = {COLON};
   __parse_expression(ps, &name, TERMINATORS, 1);
@@ -703,12 +795,19 @@ static inline Message ps_next_message(ParsingState *ps) {
     // Line had no colon and was not a message; Try next line
     sb_free(&name);
     sb_free(&text);
+    ps->has_message = false;
     return ps_next_message(ps);
   }
 
   msg.name = name.data;
   msg.text = text.data;
-  return msg;
+
+  if (ps->has_message)
+    msg_free(&ps->message);
+  ps->message = msg;
+  ps->has_message = true;
+
+  return;
 }
 
 #undef Vec

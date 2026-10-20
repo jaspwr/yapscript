@@ -14,7 +14,7 @@ Jane: How are you?
    Goodbye -> [leaving]
 
 [doing well]
-Jane: Good to here!
+Jane: Good to hear!
 
 [leaving]
 Jane: see you later, @player_name!
