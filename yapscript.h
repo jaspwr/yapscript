@@ -84,14 +84,14 @@
 
 #define BASE_SPEED 10
 
-#define Vec(T)                                                                 \
+#define YsVec(T)                                                                 \
   struct {                                                                     \
     T *data;                                                                   \
     size_t length;                                                             \
     size_t capacity;                                                           \
   }
-#define da_free(da) free((da).data)
-#define da_push(da, val)                                                       \
+#define ys_da_free(da) free((da).data)
+#define ys_da_push(da, val)                                                       \
   do {                                                                         \
     if ((da).length >= (da).capacity) {                                        \
       (da).capacity = (da).capacity == 0 ? 4 : (da).capacity * 2;              \
@@ -222,7 +222,7 @@ typedef struct {
   const char *name;
   const char *text;
   int32_t speed;
-  Vec(Response) responses;
+  YsVec(Response) responses;
 } YsMessage;
 
 static inline void msg_free(Message *msg) {
@@ -231,7 +231,7 @@ static inline void msg_free(Message *msg) {
   for (size_t i = 0; i < msg->responses.length; i++) {
     response_free(&msg->responses.data[i]);
   }
-  da_free(msg->responses);
+  ys_da_free(msg->responses);
 }
 
 typedef struct {
@@ -242,7 +242,7 @@ typedef struct {
                            const char **argv, StringBuilder *output,
                            void *user_data);
   void (*error_handler)(const char *message, void *user_data);
-  Vec(Variable) variables;
+  YsVec(Variable) variables;
   void *user_data;
   bool has_message;
   float scroll_substring;
@@ -313,7 +313,7 @@ static inline void ps_set_variable(ParsingState *ps, const char *name,
   Variable new_var = (Variable){};
   sb_replace(&new_var.identifier, name);
   sb_replace(&new_var.value, value);
-  da_push(ps->variables, new_var);
+  ys_da_push(ps->variables, new_var);
 }
 
 // Unsafe and can be reallocated. Do not hold onto pointer.
@@ -609,7 +609,7 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
     return;
   }
 
-  Vec(StringBuilder) arguments = {};
+  YsVec(StringBuilder) arguments = {};
 
   if (ps_starts_with(ps, OPEN_BRACKET)) {
     ps_skip_string(ps, OPEN_BRACKET);
@@ -628,7 +628,7 @@ static inline void ps_flush_function(ParsingState *ps, StringBuilder *output,
       }
 
       ps_skip_string(ps, COMMA);
-      da_push(arguments, arg);
+      ys_da_push(arguments, arg);
     }
     ps_skip_string(ps, CLOSE_BRACKET);
   }
@@ -704,7 +704,7 @@ static inline void __parse_response(ParsingState *ps, Message *msg) {
       .message = response_text.data,
       .destination = destination_text.data,
   };
-  da_push(msg->responses, r);
+  ys_da_push(msg->responses, r);
 }
 
 static inline int32_t ps_substring_len_tick(ParsingState *ps,
@@ -820,9 +820,9 @@ static inline void ps_next_message(ParsingState *ps) {
   return;
 }
 
-#undef Vec
-#undef da_free
-#undef da_push
+#undef YsVec
+#undef ys_da_free
+#undef ys_da_push
 #undef ARROW
 #undef COLON
 #undef AT
