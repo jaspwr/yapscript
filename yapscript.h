@@ -261,6 +261,16 @@ static inline ParsingState ps_new(const char *src) {
   };
 }
 
+static inline void ps_set_data(ParsingState *ps, const char *data) {
+  if (ps->free_on_replace) {
+    free((void *)ps->src);
+  }
+  ps->free_on_replace = true;
+  ps->src = data;
+  ps->src_len = strlen(data);
+  ps->cursor = 0;
+}
+
 static inline void ps_load(ParsingState *ps, const char *path) {
   char *buffer = 0;
   long length;
