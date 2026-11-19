@@ -265,7 +265,7 @@ static inline void ps_set_data(ParsingState *ps, const char *data) {
   if (ps->free_on_replace) {
     free((void *)ps->src);
   }
-  ps->free_on_replace = true;
+  ps->free_on_replace = false;
   ps->src = data;
   ps->src_len = strlen(data);
   ps->cursor = 0;
